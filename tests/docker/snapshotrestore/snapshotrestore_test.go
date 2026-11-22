@@ -1,6 +1,7 @@
 package snapshotrestore
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"path/filepath"
@@ -38,6 +39,7 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 	Describe("cluster snapshot and restore workflow", Ordered, func() {
 		var config *docker.TestConfig
 		var snapshotname string
+		var resourceVersion string
 		var failed bool
 		s3MockName := fmt.Sprintf("s3mock-%d", GinkgoParallelProcess())
 		s3MockPort := 9090 + GinkgoParallelProcess()
@@ -117,6 +119,17 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 
 		Context("Cluster restores from snapshot", func() {
 			It("Restores the snapshot", func() {
+				podList, err := tests.RunCommand("kubectl get --raw '/api/v1/pods?limit=1'")
+				Expect(err).NotTo(HaveOccurred())
+				var pods struct {
+					Metadata struct {
+						ResourceVersion string `json:"resourceVersion"`
+					} `json:"metadata"`
+				}
+				Expect(json.Unmarshal([]byte(podList), &pods)).To(Succeed())
+				resourceVersion = pods.Metadata.ResourceVersion
+				Expect(resourceVersion).NotTo(BeEmpty())
+
 				//Stop k3s on all servers
 				for _, server := range config.Servers {
 					cmd := "systemctl stop k3s"
@@ -144,6 +157,15 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 				cmd = "systemctl start k3s"
 				Expect(config.Servers[0].RunCmdOnNode(cmd)).Error().NotTo(HaveOccurred())
 
+			})
+
+			It("Expires the resource version from before the restore", func() {
+				cmd := fmt.Sprintf("kubectl get --raw '/api/v1/pods?resourceVersion=%s&resourceVersionMatch=Exact'", resourceVersion)
+				Eventually(func(g Gomega) {
+					res, err := tests.RunCommand(cmd)
+					g.Expect(err).To(HaveOccurred(), "list at resource version %s from before the restore succeeded", resourceVersion)
+					g.Expect(res).To(ContainSubstring("(Expired)"))
+				}, "60s", "5s").Should(Succeed())
 			})
 
 			It("Checks that other servers are not ready", func() {
