@@ -77,6 +77,11 @@ const (
 
 	maxBackupRetention = 5
 
+	// restoreRevisionBump is added to the revision of a restored snapshot, which is then marked as
+	// compacted, so that clients relist instead of reusing resource versions from before the restore.
+	// ref: https://etcd.io/docs/v3.6/op-guide/recovery/#restoring-with-revision-bump
+	restoreRevisionBump = 1_000_000_000
+
 	etcdStatusType = v1.NodeConditionType("EtcdIsVoter")
 
 	StatusUnjoined  MemberStatus = "unjoined"
@@ -1545,6 +1550,8 @@ func (e *ETCD) Restore(ctx context.Context) error {
 		OutputWALDir:   walDir(e.config),
 		PeerURLs:       []string{e.peerURL()},
 		InitialCluster: e.name + "=" + e.peerURL(),
+		RevisionBump:   restoreRevisionBump,
+		MarkCompacted:  true,
 	})
 }
 
