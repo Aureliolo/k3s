@@ -1,6 +1,7 @@
 package snapshotrestore
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"path/filepath"
@@ -118,9 +119,16 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 
 		Context("Cluster restores from snapshot", func() {
 			It("Restores the snapshot", func() {
-				rv, err := tests.RunCommand("kubectl get pods -A -o jsonpath='{.metadata.resourceVersion}'")
+				podList, err := tests.RunCommand("kubectl get --raw '/api/v1/pods?limit=1'")
 				Expect(err).NotTo(HaveOccurred())
-				resourceVersion = strings.TrimSpace(rv)
+				var pods struct {
+					Metadata struct {
+						ResourceVersion string `json:"resourceVersion"`
+					} `json:"metadata"`
+				}
+				Expect(json.Unmarshal([]byte(podList), &pods)).To(Succeed())
+				resourceVersion = pods.Metadata.ResourceVersion
+				Expect(resourceVersion).NotTo(BeEmpty())
 
 				//Stop k3s on all servers
 				for _, server := range config.Servers {
