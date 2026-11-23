@@ -38,6 +38,7 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 	Describe("cluster snapshot and restore workflow", Ordered, func() {
 		var config *docker.TestConfig
 		var snapshotname string
+		var resourceVersion string
 		var failed bool
 		s3MockName := fmt.Sprintf("s3mock-%d", GinkgoParallelProcess())
 		s3MockPort := 9090 + GinkgoParallelProcess()
@@ -117,6 +118,10 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 
 		Context("Cluster restores from snapshot", func() {
 			It("Restores the snapshot", func() {
+				rv, err := tests.RunCommand("kubectl get pods -A -o jsonpath='{.metadata.resourceVersion}'")
+				Expect(err).NotTo(HaveOccurred())
+				resourceVersion = strings.TrimSpace(rv)
+
 				//Stop k3s on all servers
 				for _, server := range config.Servers {
 					cmd := "systemctl stop k3s"
@@ -144,6 +149,17 @@ var _ = DescribeTableSubtree("Verify snapshots and cluster restores work", func(
 				cmd = "systemctl start k3s"
 				Expect(config.Servers[0].RunCmdOnNode(cmd)).Error().NotTo(HaveOccurred())
 
+			})
+
+			It("Expires the resource version from before the restore", func() {
+				cmd := fmt.Sprintf("kubectl get --raw '/api/v1/pods?resourceVersion=%s&resourceVersionMatch=Exact'", resourceVersion)
+				Eventually(func() (string, error) {
+					res, err := tests.RunCommand(cmd)
+					if err == nil {
+						return res, fmt.Errorf("list at resource version %s from before the restore succeeded", resourceVersion)
+					}
+					return res, nil
+				}, "60s", "5s").Should(ContainSubstring("(Expired)"))
 			})
 
 			It("Checks that other servers are not ready", func() {
